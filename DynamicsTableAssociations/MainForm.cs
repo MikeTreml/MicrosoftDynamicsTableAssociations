@@ -11,13 +11,24 @@ namespace DynamicsTableAssociations
     public partial class MainForm : Form
     {
         List<Table> tableList;
-        List<TableFieldAssociation> tableFieldAssociations;
+        List<Table> tableListTemp;
+        List<TableFieldAssociation> tableFieldAssociations = new();
+        List<TableFieldAssociation> tableFieldAssociationsTemp;
         List<List<TableFieldAssociation>> solutions;
+        bool skip = false;
         bool initialSearched;
         bool destSearched;
         string initTable;
         string destTable;
-
+        List<string> excludedTables = new(){
+                        "RU",
+                        "Tmp",
+                        "PDS",
+                        "Pds",
+                        "Cost",
+                        "Config",
+                        "PlInventJournalExternal"
+                    };
         int _SEARCH_LAYER;
 
         public MainForm()
@@ -41,16 +52,61 @@ namespace DynamicsTableAssociations
 
         public void LoadFiles()
         {
-            string tableFile = File.ReadAllText("tables.json");
+             string tableFile = File.ReadAllText("tables.json");
             string tableFieldAssociationFile = File.ReadAllText("tablefieldassociations.json");
+            excludedTables = textBoxFilter.Text.Split("\r\n").ToList();
+            tableListTemp = (JsonSerializer.Deserialize<List<Table>>(tableFile)).OrderBy(t => t.Name).ToList();
+            tableFieldAssociationsTemp = JsonSerializer.Deserialize<List<TableFieldAssociation>>(tableFieldAssociationFile);
+            if(excludedTables[0]=="")
+            {
+                tableFieldAssociations = tableFieldAssociationsTemp;
+                tableList = tableListTemp;
+                return;
+            }
+            foreach (var items in tableFieldAssociationsTemp)
+            {
+                skip = false;
+                foreach (var exclude in excludedTables)
+                {
+                    if ((items.ParentTableName.Contains(exclude) || items.ChildTableName.Contains(exclude)) && exclude != "")
+                    {
+                        skip = true;
+                        continue;
+                    }
 
-            tableList = (JsonSerializer.Deserialize<List<Table>>(tableFile)).OrderBy(t => t.Name).ToList();
-            tableFieldAssociations = JsonSerializer.Deserialize<List<TableFieldAssociation>>(tableFieldAssociationFile);
+                }
+                if (skip)
+                    continue;
+
+                tableFieldAssociations.Add(items);
+            }
+
+             foreach (var items in tableListTemp)
+            {
+                skip = false;
+                foreach (var exclude in excludedTables)
+                {
+                    if (items.Name.Contains(exclude))
+                    {
+                        skip = true;
+                        continue;
+                    }
+
+                }
+                if (skip)
+                    continue;
+
+                tableList.Add(items);
+            }
+            LoadTableLists();
+            //ResizeListViewColumns();
         }
 
+
+       
         public void LoadTableLists()
         {
-            foreach(var table in tableList)
+            foreach (var table in tableList)
             {
                 ListViewItem initialItem = new ListViewItem(new[] { table.Name });
                 ListViewItem destItem = new ListViewItem(new[] { table.Name });
@@ -75,11 +131,11 @@ namespace DynamicsTableAssociations
 
         private void tbInitial_TextChanged(object sender, EventArgs e)
         {
-            if(tb_initial.Text.Length >= 3)
+            if (tb_initial.Text.Length >= 3)
             {
                 lv_initial.Items.Clear();
                 IEnumerable<Table> searchedTables = tableList.Where(t => t.Name.ToLower().Contains(tb_initial.Text.ToLower()));
-                foreach(var table in searchedTables)
+                foreach (var table in searchedTables)
                 {
                     ListViewItem initialItem = new ListViewItem(new[] { table.Name });
                     lv_initial.Items.Add(initialItem);
@@ -148,6 +204,7 @@ namespace DynamicsTableAssociations
         private void btnAnalyze_Click(object sender, EventArgs e)
         {
             LoadingForm lf = new LoadingForm();
+            LoadFiles();
             try
             {
                 lf.Show();
@@ -176,10 +233,10 @@ namespace DynamicsTableAssociations
                     FindTableAssociations(th);
                     if (solutions.Any())
                     {
-                        int i = 2;
+                        int i = 1;
                         while (i <= _SEARCH_LAYER)
                         {
-                            List<List<TableFieldAssociation>> sortedSolutions = solutions.Where(l => l.Count() == i).OrderBy(x => x.First().ChildTableName).ToList();
+                            var sortedSolutions = solutions.Where(l => l.Count == i).OrderBy(x => x.First().ChildTableName).ToList();
                             if (sortedSolutions.Any())
                             {
                                 foreach (var solution in sortedSolutions)
@@ -206,7 +263,7 @@ namespace DynamicsTableAssociations
 
                 lf.Close();
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 lf.Close();
                 MessageBox.Show(ex.Message + " - \n" + ex.StackTrace, "Error Analyzing Table Relations", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -220,7 +277,7 @@ namespace DynamicsTableAssociations
                 tableHierarchy.ParentTableFieldAssociations.RemoveAt(tableHierarchy.ParentTableFieldAssociations.Count - 1);
 
             bool foundSolution = false;
-            if(tableHierarchy.Layer < _SEARCH_LAYER)
+            if (tableHierarchy.Layer < _SEARCH_LAYER)
             {
                 //Find all child tables that have relations to parent
                 var childTableFields = tableFieldAssociations.Where(ta => string.Equals(ta.ParentTableName, tableHierarchy.TableName, StringComparison.CurrentCultureIgnoreCase)).ToList();
@@ -237,6 +294,7 @@ namespace DynamicsTableAssociations
                         tableFields.Add(childTableFieldAssociation);
                         solutions.Add(tableFields);
                         foundSolution = true;
+                        continue;
                     }
 
                     if (!foundSolution)
@@ -253,16 +311,13 @@ namespace DynamicsTableAssociations
                             childTableHierarchy.ParentTableFieldAssociations = new List<TableFieldAssociation>();
 
                         //Logic to stop cycles where a->b, b->a or a->b, b->c, c->a
-                        if(!childTableHierarchy.ParentTableFieldAssociations.Any(pfa => string.Equals(pfa.ParentTableName, childTableHierarchy.TableName, StringComparison.CurrentCultureIgnoreCase)))
+                        if (!childTableHierarchy.ParentTableFieldAssociations.Any(pfa => string.Equals(pfa.ParentTableName, childTableHierarchy.TableName, StringComparison.CurrentCultureIgnoreCase)))
                         {
                             childTableHierarchy.ParentTableFieldAssociations.Add(childTableFieldAssociation);
                             FindTableAssociations(childTableHierarchy);
                         }
                     }
-                    else
-                    {
-                        continue;
-                    }
+                   
                 }
             }
         }
